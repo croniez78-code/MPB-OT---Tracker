@@ -5,9 +5,19 @@
 
 ---
 
-### 🌐 Pautan Rasmi Aplikasi / Official Live Portal
-> ## 🚀 **[https://ottracker.ai.studio](https://ottracker.ai.studio)**  
-> *Sila klik pautan rasmi di atas untuk melayari sistem Employee Overtime Portal Media Prima Berhad secara langsung dalam talian.*
+### 🌐 Pautan Rasmi Aplikasi (Official Live Portal URL)
+
+| Perkara / Item | Butiran / Details |
+|---|---|
+| **Pautan Langsung (Live URL)** | **[https://ottracker.ai.studio](https://ottracker.ai.studio)** |
+| **Akses Terus (Direct Link)** | <https://ottracker.ai.studio> |
+| **Salin URL (Copy URL)** | `https://ottracker.ai.studio` |
+| **Penyedia Awan (Cloud Host)** | Google Cloud Run • `asia-southeast1` |
+| **Pangkalan Data (Database)** | Google Cloud Firestore Live |
+
+```text
+https://ottracker.ai.studio
+```
 
 ---
 
