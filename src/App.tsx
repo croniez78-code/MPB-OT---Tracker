@@ -7,6 +7,7 @@ import {
   ToastMessage,
   ActiveView,
   AppLanguage,
+  AuthSession,
 } from './types';
 import { INITIAL_AHMAD_ENTRIES, INITIAL_OTHER_STAFF } from './mockData';
 import { Header } from './components/Header';
@@ -19,18 +20,64 @@ import { StaffDirectoryPage } from './components/StaffDirectoryPage';
 import { LoginPage } from './components/LoginPage';
 import { EditEntryModal } from './components/EditEntryModal';
 import { AuditDetailModal } from './components/AuditDetailModal';
+import { DatabaseStatusModal } from './components/DatabaseStatusModal';
 import { Toast } from './components/Toast';
+import { useFirebase } from './context/FirebaseContext';
+import {
+  saveOvertimeEntryToFirestore,
+  deleteOvertimeEntryFromFirestore,
+  submitMonthlyClaimToFirestore,
+  subscribeToUserEntries,
+  subscribeToSubmissions,
+} from './firebase';
 
 const STORAGE_KEY = 'ot_tracker_data_v2';
+const AUTH_KEY = 'ot_tracker_auth_session';
 
 export default function App() {
+  const { user, userProfile, isAdmin, signOut } = useFirebase();
+
+  // Authentication Session State
+  const [authSession, setAuthSession] = useState<AuthSession>(() => {
+    try {
+      const stored = localStorage.getItem(AUTH_KEY);
+      if (stored) {
+        return JSON.parse(stored);
+      }
+    } catch (e) {
+      console.error('Failed to parse auth session:', e);
+    }
+    return {
+      isLoggedIn: false,
+      role: 'staff',
+      userName: '',
+      department: 'Engineering',
+      staffId: '',
+    };
+  });
+
+  const isLoggedIn = !!user || authSession.isLoggedIn;
+
   // App Navigation & Language State
-  const [activeView, setActiveView] = useState<ActiveView>('staff-dashboard');
+  const [activeView, setActiveView] = useState<ActiveView>(() => {
+    try {
+      const storedAuth = localStorage.getItem(AUTH_KEY);
+      if (storedAuth) {
+        const parsed = JSON.parse(storedAuth);
+        if (parsed.isLoggedIn) {
+          return parsed.role === 'admin' ? 'admin-monitoring' : 'staff-dashboard';
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    return 'login';
+  });
   const [language, setLanguage] = useState<AppLanguage>('bm');
   const [isDarkMode, setIsDarkMode] = useState<boolean>(false);
 
   // Role & Simulation State
-  const [currentRole, setCurrentRole] = useState<UserRole>('staff');
+  const [currentRole, setCurrentRole] = useState<UserRole>(() => authSession.role || 'staff');
   const [simulatedDay, setSimulatedDay] = useState<SimulatedTimeline>('7');
   const [ahmadEntries, setAhmadEntries] = useState<OvertimeEntry[]>(INITIAL_AHMAD_ENTRIES);
   const [ahmadSubmission, setAhmadSubmission] = useState<{
@@ -45,9 +92,92 @@ export default function App() {
   // Modals
   const [editingEntry, setEditingEntry] = useState<OvertimeEntry | null>(null);
   const [auditStaffId, setAuditStaffId] = useState<string | null>(null);
+  const [isDatabaseModalOpen, setIsDatabaseModalOpen] = useState<boolean>(false);
 
   // Toasts
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+
+  // Automatically update role & session when Firebase authenticated user is detected
+  useEffect(() => {
+    if (user) {
+      const userRole: UserRole = user.email === 'croniez78@gmail.com' || isAdmin ? 'admin' : 'staff';
+      const staffName = user.displayName || user.email?.split('@')[0] || 'Staff Member';
+      setAuthSession({
+        isLoggedIn: true,
+        role: userRole,
+        userName: staffName,
+        userEmail: user.email || '',
+        department: userProfile?.department || (userRole === 'admin' ? 'HR & Operations' : 'Engineering'),
+        staffId: user.uid.substring(0, 8).toUpperCase(),
+      });
+      setCurrentRole(userRole);
+      if (activeView === 'login') {
+        setActiveView(userRole === 'admin' ? 'admin-monitoring' : 'staff-dashboard');
+      }
+    }
+  }, [user, isAdmin, userProfile]);
+
+  // Persist authSession in localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem(AUTH_KEY, JSON.stringify(authSession));
+    } catch (e) {
+      console.error('Failed to save auth session:', e);
+    }
+  }, [authSession]);
+
+  // Real-time Firestore sync for authenticated user's entries
+  useEffect(() => {
+    if (!user) return;
+    const unsub = subscribeToUserEntries(
+      user.uid,
+      (liveEntries) => {
+        if (liveEntries && liveEntries.length > 0) {
+          setAhmadEntries(liveEntries);
+        }
+      },
+      (err) => console.warn('User entries subscription error:', err)
+    );
+    return () => unsub();
+  }, [user]);
+
+  // Admin live updates for employee submissions across organization
+  useEffect(() => {
+    if (!isAdmin) return;
+    const unsub = subscribeToSubmissions(
+      (liveSubs) => {
+        if (liveSubs && liveSubs.length > 0) {
+          setOtherStaff((prev) => {
+            const updated = [...prev];
+            liveSubs.forEach((sub) => {
+              const idx = updated.findIndex((s) => s.id === sub.userId || s.id === sub.id);
+              if (idx >= 0) {
+                updated[idx] = {
+                  ...updated[idx],
+                  status: sub.status === 'Submitted' ? 'Submitted' : 'Pending',
+                  submittedAt: sub.submittedAt || updated[idx].submittedAt,
+                };
+              } else {
+                updated.unshift({
+                  id: sub.userId,
+                  name: sub.userName,
+                  department: sub.department,
+                  role: 'Staff Member',
+                  status: sub.status === 'Submitted' || sub.status === 'Approved' ? 'Submitted' : 'Pending',
+                  submittedAt: sub.submittedAt || null,
+                  avatar: sub.userName.substring(0, 2).toUpperCase(),
+                  entries: [],
+                });
+              }
+            });
+            return updated;
+          });
+        }
+      },
+      (err) => console.warn('Submissions subscription error:', err)
+    );
+    return () => unsub();
+  }, [isAdmin]);
 
   // Load from localStorage on mount
   useEffect(() => {
@@ -124,8 +254,24 @@ export default function App() {
       id: 'ot-' + Date.now(),
     };
     setAhmadEntries((prev) => [newEntry, ...prev]);
+
+    if (user) {
+      saveOvertimeEntryToFirestore(newEntry, {
+        uid: user.uid,
+        email: user.email || '',
+        displayName: user.displayName || userProfile?.name || 'Staff Member',
+        department: userProfile?.department || 'Engineering',
+      }).catch((err) => console.error('Error saving to Firestore:', err));
+    }
+
     showToast(
-      language === 'bm' ? 'Entri masa lebih masa berjaya disimpan!' : 'Overtime entry saved successfully!',
+      user
+        ? language === 'bm'
+          ? 'Entri disimpan dan disegerakkan ke Firebase Cloud!'
+          : 'Entry saved and synced to Firebase Cloud!'
+        : language === 'bm'
+        ? 'Entri masa lebih masa berjaya disimpan!'
+        : 'Overtime entry saved successfully!',
       'success',
       'check_circle'
     );
@@ -133,6 +279,16 @@ export default function App() {
 
   const handleEditEntry = (updated: OvertimeEntry) => {
     setAhmadEntries((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+
+    if (user) {
+      saveOvertimeEntryToFirestore(updated, {
+        uid: user.uid,
+        email: user.email || '',
+        displayName: user.displayName || userProfile?.name || 'Staff Member',
+        department: userProfile?.department || 'Engineering',
+      }).catch((err) => console.error('Error updating in Firestore:', err));
+    }
+
     showToast(
       language === 'bm' ? 'Perubahan rekod berjaya dikemaskini!' : 'Record changes updated successfully!',
       'success',
@@ -142,6 +298,13 @@ export default function App() {
 
   const handleDeleteEntry = (id: string) => {
     setAhmadEntries((prev) => prev.filter((item) => item.id !== id));
+
+    if (user) {
+      deleteOvertimeEntryFromFirestore(id).catch((err) =>
+        console.error('Error deleting from Firestore:', err)
+      );
+    }
+
     showToast(
       language === 'bm' ? 'Rekod dikeluarkan daripada lembaran' : 'Entry removed from timesheet',
       'info',
@@ -172,6 +335,19 @@ export default function App() {
       submittedDate: formattedDate,
     });
 
+    if (user) {
+      const totalHours = ahmadEntries.reduce((acc, curr) => acc + curr.duration, 0);
+      submitMonthlyClaimToFirestore(
+        user.uid,
+        user.displayName || userProfile?.name || 'Staff Member',
+        userProfile?.department || 'Engineering',
+        '2024-10',
+        formattedDate,
+        totalHours,
+        ahmadEntries.length
+      ).catch((err) => console.error('Error submitting monthly claim to Firestore:', err));
+    }
+
     showToast(
       language === 'bm'
         ? `Tuntutan OT Oktober berjaya disahkan & dihantar (${formattedDate})!`
@@ -181,15 +357,28 @@ export default function App() {
     );
   };
 
-  // Synchronized Ahmad as a staff member in Admin view
+  const currentStaffName = user
+    ? (user.displayName || user.email?.split('@')[0] || 'Media Prima Staff')
+    : (authSession.userName || (currentRole === 'admin' ? 'Asward' : 'Ahmad Razak'));
+
+  const currentStaffRole = currentRole === 'admin'
+    ? (language === 'bm' ? 'Pengaudit HR (Admin)' : 'Lead HR Auditor')
+    : (language === 'bm' ? 'Kakitangan (Staff)' : 'Senior Software Engineer');
+
+  const currentStaffDept = userProfile?.department || authSession.department || (currentRole === 'admin' ? 'HR & Operations' : 'Engineering');
+
+  // Synchronized current user as a staff member in Admin view
   const ahmadAsStaff: StaffMember = {
-    id: 'STF-1042',
-    name: 'Ahmad Razak',
-    department: 'Engineering',
-    role: 'Senior Software Engineer',
+    id: user
+      ? `USR-${user.uid.substring(0, 5).toUpperCase()}`
+      : authSession.staffId || (currentRole === 'admin' ? 'DIR-881' : 'STF-1042'),
+    name: currentStaffName,
+    department: currentStaffDept,
+    role: currentStaffRole,
     status: ahmadSubmission.isSubmitted ? 'Submitted' : 'Pending',
     submittedAt: ahmadSubmission.submittedDate,
-    avatar: 'AR',
+    avatar: (user?.displayName || currentStaffName || 'AR').substring(0, 2).toUpperCase(),
+    img: user?.photoURL || (currentRole === 'admin' ? '/asward-profile.jpg' : undefined),
     entries: ahmadEntries,
   };
 
@@ -403,15 +592,52 @@ export default function App() {
     );
   };
 
-  const handleLogin = (role: UserRole, userName: string) => {
+  const handleLogin = (role: UserRole, userName: string, department?: string, email?: string) => {
+    const session: AuthSession = {
+      isLoggedIn: true,
+      role,
+      userName,
+      userEmail: email || (role === 'admin' ? 'asward@mediaprima.com.my' : 'ahmad.razak@mediaprima.com.my'),
+      department: department || (role === 'admin' ? 'HR & Operations' : 'Engineering'),
+      staffId: role === 'admin' ? 'DIR-881' : 'STF-1042',
+    };
+    setAuthSession(session);
     setCurrentRole(role);
     setActiveView(role === 'staff' ? 'staff-dashboard' : 'admin-monitoring');
     showToast(
       language === 'bm'
-        ? `Log masuk berjaya sebagai ${userName} (${role === 'staff' ? 'Staf' : 'Admin'})`
-        : `Successfully logged in as ${userName} (${role})`,
+        ? `Log masuk berjaya! Selamat datang, ${userName} (${role === 'staff' ? 'Kakitangan' : 'Pentadbir HR'}).`
+        : `Login successful! Welcome, ${userName} (${role === 'staff' ? 'Staff Member' : 'HR Administrator'}).`,
       'success',
       'verified_user'
+    );
+  };
+
+  const handleLogout = async () => {
+    const prevName = currentStaffName;
+    if (user) {
+      try {
+        await signOut();
+      } catch (err) {
+        console.error('Sign-out error:', err);
+      }
+    }
+    const emptySession: AuthSession = {
+      isLoggedIn: false,
+      role: 'staff',
+      userName: '',
+      department: 'Engineering',
+      staffId: '',
+    };
+    setAuthSession(emptySession);
+    localStorage.removeItem(AUTH_KEY);
+    setActiveView('login');
+    showToast(
+      language === 'bm'
+        ? `Anda telah berjaya log keluar dari sistem (${prevName}). Sila log masuk semula untuk mengakses portal.`
+        : `You have successfully logged out (${prevName}). Please sign in again to access the portal.`,
+      'info',
+      'logout'
     );
   };
 
@@ -452,6 +678,11 @@ export default function App() {
           );
         }}
         onOpenLogin={() => setActiveView('login')}
+        onLogout={handleLogout}
+        isLoggedIn={isLoggedIn}
+        loggedInStaffName={currentStaffName}
+        loggedInStaffRole={currentStaffRole}
+        loggedInStaffDept={currentStaffDept}
         isDarkMode={isDarkMode}
         onDarkModeToggle={() => {
           const next = !isDarkMode;
@@ -464,108 +695,127 @@ export default function App() {
             next ? 'dark_mode' : 'light_mode'
           );
         }}
+        onOpenDatabaseStatus={() => setIsDatabaseModalOpen(true)}
       />
 
       {/* Main Body Canvas */}
-      <main className="w-full pt-32 pb-12 flex-1">
+      <main className={`w-full ${isLoggedIn ? 'pt-32' : 'pt-20'} pb-12 flex-1`}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 flex flex-col gap-6">
-          {/* Interactive Environment & Role Simulation Bar */}
-          <SimulationBar
-            currentRole={currentRole}
-            onRoleChange={(role) => {
-              setCurrentRole(role);
-              setActiveView(role === 'staff' ? 'staff-dashboard' : 'admin-monitoring');
-            }}
-            simulatedDay={simulatedDay}
-            onSimulatedDayChange={(day) => {
-              setSimulatedDay(day);
-              showToast(
-                language === 'bm'
-                  ? `Tarikh simulasi diubah ke ${day}hb Okt`
-                  : `Simulation date adjusted to Oct ${day}`,
-                'info',
-                'calendar_month'
-              );
-            }}
-            onResetData={handleResetData}
-          />
-
-          {/* Conditional Multi-Page Rendering */}
-          {activeView === 'login' ? (
+          {!isLoggedIn ? (
+            /* MANDATORY STAFF AUTHENTICATION GATE */
             <LoginPage
               currentRole={currentRole}
               onLogin={handleLogin}
-              onCancel={() => setActiveView(currentRole === 'staff' ? 'staff-dashboard' : 'admin-monitoring')}
               language={language}
-            />
-          ) : activeView === 'claim-review' ? (
-            <ClaimReviewPage
-              entries={ahmadEntries}
-              isSubmitted={ahmadSubmission.isSubmitted}
-              submittedDate={ahmadSubmission.submittedDate}
-              simulatedDay={simulatedDay}
-              onSubmitMonthly={handleSubmitMonthly}
-              onBackToDashboard={() => setActiveView('staff-dashboard')}
-              language={language}
-            />
-          ) : activeView === 'reports' ? (
-            <ReportsPage
-              allStaff={allStaff}
-              onExportCSV={handleExportCSV}
-              onViewStaffLogs={(staff) => setAuditStaffId(staff.id)}
-              language={language}
-            />
-          ) : activeView === 'staff-directory' ? (
-            <StaffDirectoryPage
-              allStaff={allStaff}
-              onAddNewStaff={handleAddNewStaff}
-              onSimulateStaff={handleSimulateStaff}
-              onViewStaffLogs={(staff) => setAuditStaffId(staff.id)}
-              language={language}
-            />
-          ) : activeView === 'admin-monitoring' || currentRole === 'admin' ? (
-            <AdminMonitoring
-              allStaff={allStaff}
-              simulatedDay={simulatedDay}
-              onSimulatedDayChange={(day) => {
-                setSimulatedDay(day);
-                showToast(
-                  language === 'bm'
-                    ? `Tarikh simulasi diubah ke ${day}hb Okt`
-                    : `Simulation date adjusted to Oct ${day}`,
-                  'info',
-                  'calendar_month'
-                );
-              }}
-              onSwitchToStaff={() => {
-                setCurrentRole('staff');
-                setActiveView('staff-dashboard');
-                showToast('Beralih ke Papan Pemuka Staf (Ahmad Razak)', 'info', 'switch_account');
-              }}
-              onViewLogs={(staff) => setAuditStaffId(staff.id)}
-              onSendReminder={handleSendReminder}
-              onNotifyAllPending={handleNotifyAllPending}
-              onToggleReconciled={handleToggleReconciled}
-              onQuickAddWorker={() => setActiveView('staff-directory')}
-              onExportCSV={handleExportCSV}
-              onNavigateToReports={() => setActiveView('reports')}
-              onNavigateToStaffDirectory={() => setActiveView('staff-directory')}
-              language={language}
+              isMandatory={true}
             />
           ) : (
-            <StaffDashboard
-              entries={ahmadEntries}
-              isSubmitted={ahmadSubmission.isSubmitted}
-              submittedDate={ahmadSubmission.submittedDate}
-              simulatedDay={simulatedDay}
-              onAddEntry={handleAddEntry}
-              onEditEntry={handleEditEntry}
-              onDeleteEntry={handleDeleteEntry}
-              onSubmitMonthly={handleSubmitMonthly}
-              onOpenEditModal={(entry) => setEditingEntry(entry)}
-              onNavigateToClaimReview={() => setActiveView('claim-review')}
-              language={language}
-            />
+            <>
+              {/* Interactive Environment & Role Simulation Bar */}
+              <SimulationBar
+                currentRole={currentRole}
+                onRoleChange={(role) => {
+                  setCurrentRole(role);
+                  setActiveView(role === 'staff' ? 'staff-dashboard' : 'admin-monitoring');
+                }}
+                simulatedDay={simulatedDay}
+                onSimulatedDayChange={(day) => {
+                  setSimulatedDay(day);
+                  showToast(
+                    language === 'bm'
+                      ? `Tarikh simulasi diubah ke ${day}hb Okt`
+                      : `Simulation date adjusted to Oct ${day}`,
+                    'info',
+                    'calendar_month'
+                  );
+                }}
+                onResetData={handleResetData}
+                onOpenDatabaseStatus={() => setIsDatabaseModalOpen(true)}
+              />
+
+              {/* Conditional Multi-Page Rendering for Authenticated Staff */}
+              {activeView === 'login' ? (
+                <LoginPage
+                  currentRole={currentRole}
+                  onLogin={handleLogin}
+                  onCancel={() => setActiveView(currentRole === 'staff' ? 'staff-dashboard' : 'admin-monitoring')}
+                  language={language}
+                />
+              ) : activeView === 'claim-review' ? (
+                <ClaimReviewPage
+                  entries={ahmadEntries}
+                  isSubmitted={ahmadSubmission.isSubmitted}
+                  submittedDate={ahmadSubmission.submittedDate}
+                  simulatedDay={simulatedDay}
+                  onSubmitMonthly={handleSubmitMonthly}
+                  onBackToDashboard={() => setActiveView('staff-dashboard')}
+                  language={language}
+                />
+              ) : activeView === 'reports' ? (
+                <ReportsPage
+                  allStaff={allStaff}
+                  onExportCSV={handleExportCSV}
+                  onViewStaffLogs={(staff) => setAuditStaffId(staff.id)}
+                  language={language}
+                />
+              ) : activeView === 'staff-directory' ? (
+                <StaffDirectoryPage
+                  allStaff={allStaff}
+                  onAddNewStaff={handleAddNewStaff}
+                  onSimulateStaff={handleSimulateStaff}
+                  onViewStaffLogs={(staff) => setAuditStaffId(staff.id)}
+                  language={language}
+                />
+              ) : activeView === 'admin-monitoring' || currentRole === 'admin' ? (
+                <AdminMonitoring
+                  allStaff={allStaff}
+                  simulatedDay={simulatedDay}
+                  onSimulatedDayChange={(day) => {
+                    setSimulatedDay(day);
+                    showToast(
+                      language === 'bm'
+                        ? `Tarikh simulasi diubah ke ${day}hb Okt`
+                        : `Simulation date adjusted to Oct ${day}`,
+                      'info',
+                      'calendar_month'
+                    );
+                  }}
+                  onSwitchToStaff={() => {
+                    setCurrentRole('staff');
+                    setActiveView('staff-dashboard');
+                    showToast('Beralih ke Papan Pemuka Staf', 'info', 'switch_account');
+                  }}
+                  onViewLogs={(staff) => setAuditStaffId(staff.id)}
+                  onSendReminder={handleSendReminder}
+                  onNotifyAllPending={handleNotifyAllPending}
+                  onToggleReconciled={handleToggleReconciled}
+                  onQuickAddWorker={() => setActiveView('staff-directory')}
+                  onExportCSV={handleExportCSV}
+                  onNavigateToReports={() => setActiveView('reports')}
+                  onNavigateToStaffDirectory={() => setActiveView('staff-directory')}
+                  language={language}
+                  onLogout={handleLogout}
+                />
+              ) : (
+                <StaffDashboard
+                  entries={ahmadEntries}
+                  isSubmitted={ahmadSubmission.isSubmitted}
+                  submittedDate={ahmadSubmission.submittedDate}
+                  simulatedDay={simulatedDay}
+                  onAddEntry={handleAddEntry}
+                  onEditEntry={handleEditEntry}
+                  onDeleteEntry={handleDeleteEntry}
+                  onSubmitMonthly={handleSubmitMonthly}
+                  onOpenEditModal={(entry) => setEditingEntry(entry)}
+                  onNavigateToClaimReview={() => setActiveView('claim-review')}
+                  language={language}
+                  currentStaffName={currentStaffName}
+                  currentStaffRole={currentStaffRole}
+                  currentStaffDept={currentStaffDept}
+                  onLogout={handleLogout}
+                />
+              )}
+            </>
           )}
         </div>
       </main>
@@ -611,6 +861,14 @@ export default function App() {
           handleUnlockDraft(id);
           setAuditStaffId(null);
         }}
+      />
+
+      {/* Database Connection & Cloud Sync Modal */}
+      <DatabaseStatusModal
+        isOpen={isDatabaseModalOpen}
+        onClose={() => setIsDatabaseModalOpen(false)}
+        language={language}
+        onToast={showToast}
       />
 
       {/* Toast Notification Container */}

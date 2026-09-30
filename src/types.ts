@@ -42,3 +42,13 @@ export interface ToastMessage {
   icon?: string;
 }
 
+export interface AuthSession {
+  isLoggedIn: boolean;
+  role: UserRole;
+  userName: string;
+  userEmail?: string;
+  department?: string;
+  staffId?: string;
+}
+
+

@@ -7,6 +7,7 @@ interface SimulationBarProps {
   simulatedDay: SimulatedTimeline;
   onSimulatedDayChange: (day: SimulatedTimeline) => void;
   onResetData: () => void;
+  onOpenDatabaseStatus?: () => void;
 }
 
 export const SimulationBar: React.FC<SimulationBarProps> = ({
@@ -15,6 +16,7 @@ export const SimulationBar: React.FC<SimulationBarProps> = ({
   simulatedDay,
   onSimulatedDayChange,
   onResetData,
+  onOpenDatabaseStatus,
 }) => {
   return (
     <div className="w-full bg-surface-container-lowest p-4 rounded-xl shadow-xs border border-outline-variant/40 flex flex-col md:flex-row items-center justify-between gap-4">
@@ -81,6 +83,20 @@ export const SimulationBar: React.FC<SimulationBarProps> = ({
             <option value="14">Oct 14 (Post-Cutoff)</option>
           </select>
         </div>
+
+        {/* Connect Database Button */}
+        {onOpenDatabaseStatus && (
+          <button
+            type="button"
+            onClick={onOpenDatabaseStatus}
+            className="px-3 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow-2xs"
+            title="Lihat status sambungan pangkalan data Firebase"
+          >
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="material-symbols-outlined text-[16px]">database</span>
+            <span>Pangkalan Data</span>
+          </button>
+        )}
 
         {/* Reset Synthetic Data Button */}
         <button

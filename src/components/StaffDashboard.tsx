@@ -17,6 +17,10 @@ interface StaffDashboardProps {
   onOpenEditModal: (entry: OvertimeEntry) => void;
   onNavigateToClaimReview?: () => void;
   language?: 'en' | 'bm';
+  currentStaffName?: string;
+  currentStaffRole?: string;
+  currentStaffDept?: string;
+  onLogout?: () => void;
 }
 
 export const StaffDashboard: React.FC<StaffDashboardProps> = ({
@@ -30,6 +34,10 @@ export const StaffDashboard: React.FC<StaffDashboardProps> = ({
   onOpenEditModal,
   onNavigateToClaimReview,
   language = 'en',
+  currentStaffName,
+  currentStaffRole,
+  currentStaffDept,
+  onLogout,
 }) => {
   const isBm = language === 'bm';
   const [viewMode, setViewMode] = useState<'table' | 'calendar'>('table');
@@ -287,14 +295,32 @@ export const StaffDashboard: React.FC<StaffDashboardProps> = ({
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* User Overview Card */}
         <div className="bg-surface-container-lowest p-5 rounded-xl shadow-xs border border-outline-variant/40 flex flex-col justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-xl bg-primary text-on-primary flex items-center justify-center font-headline font-bold text-lg shadow-xs">
-              AR
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-12 h-12 rounded-xl bg-primary text-on-primary flex items-center justify-center font-headline font-bold text-lg shadow-xs shrink-0">
+                {(currentStaffName || 'AR').substring(0, 2).toUpperCase()}
+              </div>
+              <div className="min-w-0">
+                <div className="font-headline font-bold text-sm text-on-surface truncate">
+                  {currentStaffName || 'Ahmad Razak'}
+                </div>
+                <div className="text-xs text-on-surface-variant truncate">
+                  {currentStaffDept || 'Engineering'} • {currentStaffRole || (isBm ? 'Kakitangan' : 'Staff')}
+                </div>
+              </div>
             </div>
-            <div>
-              <div className="font-headline font-bold text-sm text-on-surface">Ahmad Razak</div>
-              <div className="text-xs text-on-surface-variant">STF-1042 • Engineering</div>
-            </div>
+
+            {onLogout && (
+              <button
+                type="button"
+                onClick={onLogout}
+                className="px-2.5 py-1 rounded-lg text-xs font-bold text-red-700 dark:text-red-300 bg-red-50 hover:bg-red-100 dark:bg-red-950/50 hover:shadow-xs border border-red-200 dark:border-red-900 transition-all flex items-center gap-1 shrink-0 cursor-pointer"
+                title={isBm ? 'Log keluar staf daripada portal' : 'Log out staff session'}
+              >
+                <span className="material-symbols-outlined text-[16px] text-red-600 dark:text-red-400">logout</span>
+                <span className="text-[11px] font-bold">{isBm ? 'Log Keluar' : 'Logout'}</span>
+              </button>
+            )}
           </div>
           <div className="mt-4 pt-3 bg-surface-container-low px-3 py-2 rounded-lg flex items-center justify-between border border-outline-variant/30">
             <span className="text-[11px] font-semibold text-on-surface-variant uppercase tracking-wider">

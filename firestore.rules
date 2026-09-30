@@ -1,0 +1,151 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 1. Global Catch-All Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Admin authorization check: checks bootstrapped admin or role in admins collection
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == "croniez78@gmail.com" ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    // User Profile Validation
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['id', 'email', 'name', 'role', 'department']) &&
+        data.keys().hasOnly(['id', 'email', 'name', 'role', 'department', 'avatar', 'createdAt', 'updatedAt']) &&
+        data.id is string && data.id.size() <= 128 &&
+        data.email is string && data.email.size() <= 254 &&
+        data.name is string && data.name.size() > 0 && data.name.size() <= 128 &&
+        data.role in ['staff', 'admin'] &&
+        data.department is string && data.department.size() <= 100 &&
+        (!('avatar' in data) || (data.avatar is string && data.avatar.size() <= 10)) &&
+        (!('createdAt' in data) || data.createdAt is timestamp || data.createdAt is string) &&
+        (!('updatedAt' in data) || data.updatedAt is timestamp || data.updatedAt is string);
+    }
+
+    // Admin Record Validation
+    function isValidAdminRecord(data) {
+      return data.keys().hasAll(['email', 'role']) &&
+        data.keys().hasOnly(['email', 'role', 'assignedAt']) &&
+        data.email is string && data.email.size() <= 254 &&
+        data.role is string && data.role.size() <= 32;
+    }
+
+    // Overtime Entry Validation
+    function isValidOvertimeEntry(data) {
+      return data.keys().hasAll(['id', 'userId', 'userEmail', 'userName', 'department', 'date', 'startTime', 'endTime', 'duration', 'project']) &&
+        data.keys().hasOnly(['id', 'userId', 'userEmail', 'userName', 'department', 'date', 'startTime', 'endTime', 'duration', 'project', 'notes', 'createdAt', 'updatedAt']) &&
+        data.id is string && data.id.size() <= 128 &&
+        data.userId is string && data.userId.size() <= 128 &&
+        data.userEmail is string && data.userEmail.size() <= 254 &&
+        data.userName is string && data.userName.size() <= 128 &&
+        data.department is string && data.department.size() <= 100 &&
+        data.date is string && data.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
+        data.startTime is string && data.startTime.matches('^[0-9]{2}:[0-9]{2}$') &&
+        data.endTime is string && data.endTime.matches('^[0-9]{2}:[0-9]{2}$') &&
+        data.duration is number && data.duration >= 0 && data.duration <= 24 &&
+        data.project is string && data.project.size() > 0 && data.project.size() <= 150 &&
+        (!('notes' in data) || (data.notes is string && data.notes.size() <= 500)) &&
+        (!('createdAt' in data) || data.createdAt is timestamp || data.createdAt is string) &&
+        (!('updatedAt' in data) || data.updatedAt is timestamp || data.updatedAt is string);
+    }
+
+    // Monthly Submission Validation
+    function isValidMonthlySubmission(data) {
+      return data.keys().hasAll(['id', 'userId', 'userName', 'department', 'month', 'status']) &&
+        data.keys().hasOnly(['id', 'userId', 'userName', 'department', 'month', 'status', 'submittedAt', 'totalHours', 'totalEntries', 'createdAt', 'updatedAt']) &&
+        data.id is string && data.id.size() <= 128 &&
+        data.userId is string && data.userId.size() <= 128 &&
+        data.userName is string && data.userName.size() <= 128 &&
+        data.department is string && data.department.size() <= 100 &&
+        data.month is string && data.month.matches('^[0-9]{4}-[0-9]{2}$') &&
+        data.status in ['Pending', 'Submitted', 'Approved', 'Rejected'] &&
+        (!('submittedAt' in data) || (data.submittedAt is string && data.submittedAt.size() <= 64)) &&
+        (!('totalHours' in data) || (data.totalHours is number && data.totalHours >= 0)) &&
+        (!('totalEntries' in data) || (data.totalEntries is number && data.totalEntries >= 0)) &&
+        (!('createdAt' in data) || data.createdAt is timestamp || data.createdAt is string) &&
+        (!('updatedAt' in data) || data.updatedAt is timestamp || data.updatedAt is string);
+    }
+
+    // 2. Users Collection
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isValidId(userId) && isOwner(userId) && isValidUserProfile(incoming()) && (incoming().role == 'staff' || isAdmin());
+      allow update: if isValidId(userId) && isValidUserProfile(incoming()) && (
+        isAdmin() || (
+          isOwner(userId) &&
+          incoming().id == existing().id &&
+          incoming().role == existing().role &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'department', 'avatar', 'updatedAt'])
+        )
+      );
+      allow delete: if isValidId(userId) && isAdmin();
+    }
+
+    // 3. Admins Collection
+    match /admins/{adminId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isValidId(adminId) && isAdmin() && isValidAdminRecord(incoming());
+    }
+
+    // 4. Overtime Entries Collection
+    match /overtimeEntries/{entryId} {
+      allow get: if isValidId(entryId) && (isAdmin() || (isSignedIn() && existing().userId == request.auth.uid));
+      allow list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isValidId(entryId) && isSignedIn() && incoming().userId == request.auth.uid && isValidOvertimeEntry(incoming());
+      allow update: if isValidId(entryId) && isSignedIn() && isValidOvertimeEntry(incoming()) && (
+        isAdmin() || (
+          existing().userId == request.auth.uid &&
+          incoming().userId == existing().userId &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['date', 'startTime', 'endTime', 'duration', 'project', 'notes', 'updatedAt'])
+        )
+      );
+      allow delete: if isValidId(entryId) && (isAdmin() || (isSignedIn() && existing().userId == request.auth.uid));
+    }
+
+    // 5. Monthly Submissions Collection
+    match /monthlySubmissions/{submissionId} {
+      allow get: if isValidId(submissionId) && (isAdmin() || (isSignedIn() && existing().userId == request.auth.uid));
+      allow list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isValidId(submissionId) && isSignedIn() && incoming().userId == request.auth.uid && isValidMonthlySubmission(incoming());
+      allow update: if isValidId(submissionId) && isSignedIn() && isValidMonthlySubmission(incoming()) && (
+        isAdmin() || (
+          existing().userId == request.auth.uid &&
+          incoming().userId == existing().userId &&
+          (existing().status == 'Pending' || existing().status == 'Submitted') &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'submittedAt', 'totalHours', 'totalEntries', 'updatedAt'])
+        )
+      );
+      allow delete: if isValidId(submissionId) && isAdmin();
+    }
+  }
+}

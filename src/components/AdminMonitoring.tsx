@@ -15,6 +15,7 @@ interface AdminMonitoringProps {
   onNavigateToReports?: () => void;
   onNavigateToStaffDirectory?: () => void;
   language?: 'en' | 'bm';
+  onLogout?: () => void;
 }
 
 export const AdminMonitoring: React.FC<AdminMonitoringProps> = ({
@@ -31,6 +32,7 @@ export const AdminMonitoring: React.FC<AdminMonitoringProps> = ({
   onNavigateToReports,
   onNavigateToStaffDirectory,
   language = 'en',
+  onLogout,
 }) => {
   const isBm = language === 'bm';
   const [searchTerm, setSearchTerm] = useState('');
@@ -240,10 +242,23 @@ export const AdminMonitoring: React.FC<AdminMonitoringProps> = ({
             type="button"
             onClick={onExportCSV}
             title={isBm ? 'Muat Turun Fail CSV Penggajian' : 'Export Payroll Reconciliation CSV'}
-            className="p-2 rounded-lg bg-surface-container-low hover:bg-surface-container text-on-surface-variant hover:text-on-surface transition-colors border border-outline-variant/30"
+            className="p-2 rounded-lg bg-surface-container-low hover:bg-surface-container text-on-surface-variant hover:text-on-surface transition-colors border border-outline-variant/30 cursor-pointer"
           >
             <span className="material-symbols-outlined text-[20px]">download</span>
           </button>
+
+          {/* Admin Logout Button */}
+          {onLogout && (
+            <button
+              type="button"
+              onClick={onLogout}
+              title={isBm ? 'Log keluar pentadbir HR' : 'Log out HR administrator'}
+              className="px-3 py-2 rounded-lg bg-red-50 hover:bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-300 text-xs font-bold flex items-center gap-1.5 transition-all border border-red-200 dark:border-red-900 cursor-pointer"
+            >
+              <span className="material-symbols-outlined text-[16px] text-red-600 dark:text-red-400">logout</span>
+              <span>{isBm ? 'Log Keluar' : 'Logout'}</span>
+            </button>
+          )}
         </div>
       </div>
 
