@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 100" fill="none">
+  <!-- Media Prima Red Square -->
+  <rect x="0" y="0" width="100" height="100" fill="#E21836" />
+  
+  <!-- "media" text inside red square -->
+  <text 
+    x="50" 
+    y="61" 
+    fill="#FFFFFF" 
+    font-family="'Plus Jakarta Sans', 'Inter', 'Helvetica Neue', Arial, sans-serif" 
+    font-size="33" 
+    font-weight="800" 
+    letter-spacing="-1" 
+    text-anchor="middle"
+    dominant-baseline="central"
+  >media</text>
+
+  <!-- "prima" text outside red square -->
+  <text 
+    x="112" 
+    y="61" 
+    fill="#000000" 
+    font-family="'Plus Jakarta Sans', 'Inter', 'Helvetica Neue', Arial, sans-serif" 
+    font-size="33" 
+    font-weight="800" 
+    letter-spacing="-1" 
+    text-anchor="start"
+    dominant-baseline="central"
+  >prima</text>
+</svg>

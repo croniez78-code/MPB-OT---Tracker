@@ -1,0 +1,8 @@
+{
+  "name": "Remix OT Tracker - Employee Overtime Portal - MPB",
+  "description": "Enterprise Overtime Tracker and Compliance Monitoring Portal for daily OT logging and monthly 7th-cutoff payroll reconciliation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
